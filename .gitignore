@@ -1,0 +1,40 @@
+# local config (copy of config/env.example.sh with your paths)
+config/env.sh
+# upstream clones (rl/apply_patch.sh, envs/setup_nft_vp.sh)
+third_party/
+# data, outputs, weights, logs: all live under $VP_DATA, never in the repo
+*.png
+*.jpg
+*.jpeg
+*.zip
+*.tar
+*.pth
+*.pt
+*.bin
+*.ckpt
+*.safetensors
+*.pkl
+*.pickle
+*.h5
+*.mat
+*.npy
+*.npz
+*.log
+wandb/
+logs/
+outputs/
+checkpoints/
+datasets/
+models/
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+.ipynb_checkpoints/
+# secrets
+.env
+*.token
+token

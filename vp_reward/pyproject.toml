@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vp_reward"
+version = "1.0.0"   # 1.0 = the frozen reward of FINAL.md (Task 11, 2026-11-17)
+description = "Frozen vanishing-point perspective-consistency reward for text-to-image RL (DeepLSD lines + RANSAC VPs)"
+requires-python = ">=3.10"
+dependencies = ["numpy", "opencv-python", "scipy", "pillow"]   # DeepLSD / torch / flow_grpo: see envs/setup_nft_vp.sh
+
+[project.scripts]
+vp-score = "vp_reward.score:main"
+
+[tool.setuptools]
+packages = ["vp_reward"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["data: needs the stored outputs under $VP_DATA (skipped if absent)", "gpu: needs a CUDA GPU (skipped if absent)"]
