@@ -1,0 +1,288 @@
+diff --git a/config/nft.py b/config/nft.py
+index 3230c13..2448fd3 100644
+--- a/config/nft.py
++++ b/config/nft.py
+@@ -11,7 +11,7 @@ def get_config(name):
+ def _get_config(base_model="sd3", n_gpus=1, gradient_step_per_epoch=1, dataset="pickscore", reward_fn={}, name=""):
+     config = base.get_config()
+     assert base_model in ["sd3"]
+-    assert dataset in ["pickscore", "ocr", "geneval"]
++    assert dataset in ["pickscore", "ocr", "geneval", "vp_hypersim"]
+ 
+     config.base_model = base_model
+     config.dataset = os.path.join(os.getcwd(), f"dataset/{dataset}")
+@@ -136,3 +136,20 @@ def sd3_multi_reward():
+     config.sample.num_steps = 25
+     config.beta = 0.1
+     return config
++
++
++def sd3_vp():
++    """Frozen perspective reward (vp_reward/FINAL.md); R already contains PickScore + aesthetic. All other hyperparameters
++    are the sd3 defaults of _get_config (as in sd3_pickscore); n_gpus = number of free GPUs (env NFT_N_GPUS, default 4)."""
++    reward_fn = {
++        "vp_perspective": 1.0,
++    }
++    config = _get_config(
++        base_model="sd3",
++        n_gpus=int(os.environ.get("NFT_N_GPUS", 4)),
++        gradient_step_per_epoch=1,
++        dataset="vp_hypersim",
++        reward_fn=reward_fn,
++        name="vp",
++    )
++    return config
+diff --git a/flow_grpo/rewards.py b/flow_grpo/rewards.py
+index 647b808..ba42f6c 100644
+--- a/flow_grpo/rewards.py
++++ b/flow_grpo/rewards.py
+@@ -253,6 +253,53 @@ def unifiedreward_score_sglang(device):
+     return _fn
+ 
+ 
++def _hf_stats(u8):
++    """Per-image high-frequency energy of grey uint8 NHWC images: Immerkaer noise sigma (no floor) and Laplacian variance."""
++    import cv2
++
++    M = np.array([[1, -2, 1], [-2, 4, -2], [1, -2, 1]], np.float32)
++    nz, lv = [], []
++    for x in u8:
++        g = cv2.cvtColor(x, cv2.COLOR_RGB2GRAY).astype(np.float32)
++        h, w = g.shape
++        c = cv2.filter2D(g, -1, M, borderType=cv2.BORDER_REFLECT)[1:-1, 1:-1]
++        nz.append(float(np.sqrt(np.pi / 2) * np.abs(c).sum() / (6 * (w - 2) * (h - 2))))
++        lv.append(float(cv2.Laplacian(g, cv2.CV_32F).var()))
++    return np.array(nz), np.array(lv)
++
++
++def vp_perspective(device):
++    """Frozen perspective reward (vp_reward/FINAL.md) via vp_reward.final.perspective_reward.
++    Lc_base map: $VP_LC_BASE (default dataset/vp_hypersim/lc_base.json), prompt -> mean Lc of 4 base SD3.5 rollouts.
++    Returns (R, info); info carries the reward parts + high-frequency image statistics (monitoring only, not in R)."""
++    import json, multiprocessing, os
++
++    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++    from vp_reward.final import perspective_reward, to_uint8_nhwc  # pip install -e <vp-perspective-rl>/vp_reward
++
++    # geometry workers must not be forked from this multi-threaded CUDA process
++    if multiprocessing.get_start_method(allow_none=True) != "forkserver":
++        multiprocessing.set_start_method("forkserver", force=True)
++    lc_path = os.environ.get("VP_LC_BASE", os.path.join(repo, "dataset", "vp_hypersim", "lc_base.json"))
++    lc_base = json.load(open(lc_path))
++    fn = perspective_reward(device=device, lc_base=lc_base, n_workers=int(os.environ.get("VP_NWORKERS", "12")))
++
++    def _fn(images, prompts, metadata):
++        import time
++
++        t0 = time.time()
++        R, info = fn(images, prompts, metadata)
++        dt = time.time() - t0
++        nz, lv = _hf_stats(to_uint8_nhwc(images))
++        keep = ("G_raw", "G_nan", "zG", "Lc", "Lc_base", "P", "pickscore", "aesthetic", "zQ")
++        out = {k: np.asarray(info[k], dtype=np.float32) for k in keep}
++        out["hf_noise"], out["hf_lapvar"] = nz.astype(np.float32), lv.astype(np.float32)
++        out["t_reward"] = np.full(len(R), dt / max(len(R), 1), np.float32)  # reward wall time, spread over the batch
++        return R, out
++
++    return _fn
++
++
+ def multi_score(device, score_dict):
+     score_functions = {
+         "ocr": ocr_score,
+@@ -264,6 +311,7 @@ def multi_score(device, score_dict):
+         "geneval": geneval_score,
+         "clipscore": clip_score,
+         "hpsv2": hpsv2_score,
++        "vp_perspective": vp_perspective,
+     }
+     score_fns = {}
+     for score_name, weight in score_dict.items():
+@@ -291,6 +339,9 @@ def multi_score(device, score_dict):
+                     score_details[f"{key}_accuracy"] = value
+             else:
+                 scores, rewards = score_fns[score_name](images, prompts, metadata)
++                if score_name == "vp_perspective":  # per-image reward parts, logged as reward_vp_<part> (not used for advantages)
++                    for k, v in rewards.items():
++                        score_details[f"vp_{k}"] = v
+             score_details[score_name] = scores
+             weighted_scores = [weight * score for score in scores]
+ 
+diff --git a/scripts/evaluation.py b/scripts/evaluation.py
+index 261deb8..04cae90 100644
+--- a/scripts/evaluation.py
++++ b/scripts/evaluation.py
+@@ -199,7 +199,6 @@ def main(args):
+             "imagereward": 1.0,
+             "pickscore": 1.0,
+             "aesthetic": 1.0,
+-            "unifiedreward": 1.0,
+             "clipscore": 1.0,
+             "hpsv2": 1.0,
+         }
+@@ -210,7 +209,6 @@ def main(args):
+             "imagereward": 1.0,
+             "pickscore": 1.0,
+             "aesthetic": 1.0,
+-            "unifiedreward": 1.0,
+             "clipscore": 1.0,
+             "hpsv2": 1.0,
+         }
+diff --git a/scripts/train_nft_sd3.py b/scripts/train_nft_sd3.py
+index 2a8c273..bcf0463 100644
+--- a/scripts/train_nft_sd3.py
++++ b/scripts/train_nft_sd3.py
+@@ -201,6 +201,35 @@ def calculate_zero_std_ratio(prompts, gathered_rewards):
+     return zero_std_ratio, prompt_std_devs.mean()
+ 
+ 
++def _vp_epoch_stats(gathered, zero_std_ratio):
++    """[VP] per-epoch summary of the frozen perspective reward parts (keys from flow_grpo.rewards.vp_perspective)."""
++    out = {"zero_std_ratio": float(zero_std_ratio)}
++    R = gathered["avg"][:, 0] if gathered["avg"].ndim == 2 else gathered["avg"]
++    out["R_mean"], out["R_std"] = float(np.mean(R)), float(np.std(R))
++    for k in ("zG", "G_raw", "P", "pickscore", "aesthetic", "zQ", "Lc", "Lc_base", "hf_noise", "hf_lapvar"):
++        v = gathered.get(f"vp_{k}")
++        if v is not None:
++            out[f"{k}_mean"], out[f"{k}_std"] = float(np.nanmean(v)), float(np.nanstd(v))
++    if "vp_G_nan" in gathered:
++        out["nan_rate"] = float(np.mean(gathered["vp_G_nan"]))
++    if "vp_P" in gathered:
++        out["floor_activity"] = float(np.mean(gathered["vp_P"] > 0))
++    if "vp_t_reward" in gathered:
++        out["reward_compute_s_per_gpu"] = float(np.sum(gathered["vp_t_reward"]))
++    return out
++
++
++def _vp_append_csv(path, row):
++    import csv
++
++    new = not os.path.exists(path)
++    with open(path, "a", newline="") as f:
++        w = csv.DictWriter(f, fieldnames=list(row.keys()))
++        if new:
++            w.writeheader()
++        w.writerow(row)
++
++
+ def eval_fn(
+     pipeline,
+     test_dataloader,
+@@ -219,6 +248,7 @@ def eval_fn(
+ ):
+     if config.train.ema and ema is not None:
+         ema.copy_ema_to(transformer_trainable_parameters, store_temp=True)
++    t_eval0 = time.time()  # [VP] eval-pass timing
+ 
+     pipeline.transformer.eval()
+ 
+@@ -292,6 +322,14 @@ def eval_fn(
+ 
+     if is_main_process(rank):
+         final_rewards = {key: np.concatenate(value_list) for key, value_list in all_rewards.items()}
++        logger.info(f"[VP] eval pass: {time.time() - t_eval0:.1f}s, {len(final_rewards['avg'])} samples, "
++                    f"mean R {np.mean(final_rewards['avg']):.4f}")
++        try:  # [VP] eval summary row
++            ev = _vp_epoch_stats(final_rewards, float("nan"))
++            ev.update(global_step=global_step, eval_s=time.time() - t_eval0, n=len(final_rewards["avg"]))
++            _vp_append_csv(os.path.join(config.logdir, config.run_name, "vp_eval_stats.csv"), ev)
++        except Exception as e:
++            logger.warning(f"[VP] eval csv failed: {e}")
+ 
+         images_to_log = images.cpu()
+         prompts_to_log = prompts
+@@ -586,6 +624,8 @@ def main(_):
+         # SAMPLING
+         pipeline.transformer.eval()
+         samples_data_list = []
++        t_ep0 = time.time(); t_eval = 0.0; vp_dump = []  # [VP] timing + sample dump
++        torch.cuda.reset_peak_memory_stats(device)
+ 
+         for i in tqdm(
+             range(config.sample.num_batches_per_epoch),
+@@ -607,6 +647,7 @@ def main(_):
+             ).input_ids.to(device)
+ 
+             if i == 0 and epoch % config.eval_freq == 0 and not config.debug:
++                t_e = time.time()
+                 eval_fn(
+                     pipeline,
+                     test_dataloader,
+@@ -623,6 +664,7 @@ def main(_):
+                     ema,
+                     transformer_trainable_parameters,
+                 )
++                t_eval += time.time() - t_e
+ 
+             if i == 0 and epoch % config.save_freq == 0 and is_main_process(rank) and not config.debug:
+                 save_ckpt(
+@@ -663,6 +705,9 @@ def main(_):
+ 
+             rewards_future = executor.submit(reward_fn, images, prompts, prompt_metadata, only_strict=True)
+             time.sleep(0)
++            if is_main_process(rank) and sum(len(d[1]) for d in vp_dump) < 16:  # [VP] keep first rank-0 samples
++                # exactly the uint8 conversion the reward applies (vp_reward.final.to_uint8_nhwc) on the original-dtype tensor
++                vp_dump.append((i, list(prompts), (images.detach() * 255).round().clamp(0, 255).to(torch.uint8).cpu(), str(images.dtype)))
+ 
+             samples_data_list.append(
+                 {
+@@ -676,6 +721,7 @@ def main(_):
+                 }
+             )
+ 
++        t_samp_end = time.time()
+         for sample_item in tqdm(
+             samples_data_list, desc="Waiting for rewards", disable=not is_main_process(rank), position=0
+         ):
+@@ -683,6 +729,22 @@ def main(_):
+             sample_item["rewards"] = {k: torch.as_tensor(v, device=device).float() for k, v in rewards.items()}
+             del sample_item["rewards_future"]
+ 
++        t_rew_end = time.time()
++        if is_main_process(rank) and vp_dump:  # [VP] save first 16 rank-0 samples + their logged reward parts
++            ddir = os.path.join(config.logdir, config.run_name, "samples", f"epoch_{epoch:04d}")
++            os.makedirs(ddir, exist_ok=True)
++            recs = []
++            for bi, prs, ims, idt in vp_dump:
++                rw = {k: v.detach().cpu().numpy() for k, v in samples_data_list[bi]["rewards"].items()}
++                for j in range(len(prs)):
++                    if len(recs) >= 16:
++                        break
++                    fn = os.path.join(ddir, f"{len(recs):02d}.png")
++                    Image.fromarray(ims[j].numpy().transpose(1, 2, 0)).save(fn)
++                    recs.append({"file": fn, "prompt": prs[j], "image_dtype": idt, **{k: float(np.asarray(v[j]).reshape(-1)[0]) for k, v in rw.items()}})
++            with open(os.path.join(ddir, "logged.json"), "w") as f:
++                json.dump(recs, f, indent=1)
++
+         # Collate samples
+         collated_samples = {
+             k: (
+@@ -766,6 +828,9 @@ def main(_):
+                     },
+                     step=global_step,
+                 )
++            if is_main_process(rank):  # [VP] per-epoch reward-part stats
++                vp_row = _vp_epoch_stats(gathered_rewards_dict, zero_std_ratio)
++                wandb.log({f"vp/{k}": v for k, v in vp_row.items()}, step=global_step)
+             stat_tracker.clear()
+         else:
+             avg_rewards_all = gathered_rewards_dict["avg"]
+@@ -1030,6 +1095,18 @@ def main(_):
+ 
+         if world_size > 1:
+             dist.barrier()
++        t_train_end = time.time()  # [VP] timings + peak memory
++        mem = torch.tensor([torch.cuda.max_memory_allocated(device), torch.cuda.max_memory_reserved(device)], device=device, dtype=torch.float64)
++        mems = gather_tensor_to_all(mem[None], world_size).numpy() / 2**30
++        if is_main_process(rank):
++            vp_row.update(epoch=epoch, global_step=global_step, t_eval_s=t_eval, t_sampling_s=t_samp_end - t_ep0 - t_eval,
++                          t_reward_wait_s=t_rew_end - t_samp_end, t_train_s=t_train_end - t_rew_end, t_epoch_s=t_train_end - t_ep0,
++                          **{f"peak_alloc_gb_gpu{r}": float(mems[r, 0]) for r in range(world_size)},
++                          **{f"peak_reserved_gb_gpu{r}": float(mems[r, 1]) for r in range(world_size)},
++                          loadavg_1m=os.getloadavg()[0])
++            _vp_append_csv(os.path.join(config.logdir, config.run_name, "vp_epoch_stats.csv"), vp_row)
++            wandb.log({f"vp/{k}": v for k, v in vp_row.items() if k.startswith(("t_", "peak_", "loadavg"))}, step=global_step)
++            logger.info(f"[VP] epoch {epoch}: " + ", ".join(f"{k}={v:.4g}" for k, v in vp_row.items() if isinstance(v, float)))
+ 
+         with torch.no_grad():
+             decay = return_decay(global_step, config.decay_type)
