@@ -27,7 +27,9 @@ git -C "$VP_DEEPLSD_DIR" submodule update --init --recursive third_party/pytlsd
 # This pytlsd commit is not on PyPI. Its build pulls the newest cmake (4.x), which rejects the bundled pybind11's
 # cmake_minimum_required; CMAKE_POLICY_VERSION_MINIMUM=3.5 is the workaround. Build from a copy so no build/ lands in the clone.
 rm -rf "$VP_DATA/tmp/pytlsd_src"; cp -r "$VP_DEEPLSD_DIR/third_party/pytlsd" "$VP_DATA/tmp/pytlsd_src"; rm -rf "$VP_DATA/tmp/pytlsd_src/build"
-CMAKE_POLICY_VERSION_MINIMUM=3.5 "$PY" -m pip install --no-deps "$VP_DATA/tmp/pytlsd_src"
+# Its bundled pybind11 omits #include <cstdint>, which GCC >= 13 no longer pulls in implicitly (NCSA Delta: GCC 14), so
+# force-include it. Harmless on older compilers.
+CXXFLAGS="${CXXFLAGS:-} -include cstdint" CMAKE_POLICY_VERSION_MINIMUM=3.5 "$PY" -m pip install --no-deps "$VP_DATA/tmp/pytlsd_src"
 "$PY" -m pip install --no-deps -e "$VP_DEEPLSD_DIR"
 
 echo "== 5. DiffusionNFT @ $NFT_COMMIT + our patch (rl/diffusionnft_vp.patch)"
