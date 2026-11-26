@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VP reward dashboard</title>
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#fff; --ink:#1b1f24; --muted:#687080; --line:#e2e5ea; --accent:#2f6fde;
+  --vp1:#1f77b4; --vp2:#2ca02c; --vp3:#9467bd; --bad:#d62728; --unasg:#9aa0a8;
+  --pos:#2a9d6f; --neg:#d0473f; --ref:#e07b28; --twin:#3b7dd8;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#14171b; --panel:#1d2126; --ink:#e7e9ec; --muted:#9aa3ae; --line:#2f353c; --accent:#6fa0ff;
+  --vp1:#4ea3e6; --vp2:#4cc35a; --vp3:#b48ce0; --bad:#ff5a5a; --unasg:#7c838c; --pos:#3cc58c; --neg:#ff6b61; --ref:#f39a4c; --twin:#6aa2f0;
+}}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--ink)}
+header{padding:14px 22px 6px;display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
+header h1{font-size:18px;margin:0}
+header .sub{color:var(--muted);font-size:12.5px}
+.bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:8px 22px;position:sticky;top:0;background:var(--bg);z-index:5;border-bottom:1px solid var(--line)}
+select,input,button{font:inherit;color:inherit;background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:5px 9px}
+button{cursor:pointer} button:hover{border-color:var(--accent)}
+input[type=search]{width:220px}
+.bar .grow{flex:1}
+.summary{display:grid;grid-template-columns:minmax(320px,1.4fr) repeat(4,minmax(140px,1fr));gap:12px;padding:12px 22px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.card h3{margin:0 0 6px;font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.big{font-size:22px;font-weight:650;font-variant-numeric:tabular-nums}
+.kv{display:grid;grid-template-columns:auto auto;gap:2px 12px;font-variant-numeric:tabular-nums;font-size:13px}
+.kv span:nth-child(odd){color:var(--muted)}
+.legend{display:flex;gap:12px;font-size:12px;color:var(--muted)} .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(560px,1fr));gap:12px;padding:4px 22px 30px}
+.pair{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 10px}
+.pair .hd{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--muted)}
+.pair .hd b{color:var(--ink);font-weight:600}
+.pair .cap{font-size:12.5px;margin:4px 0 7px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.thumbs{display:grid;grid-template-columns:repeat(5,1fr);gap:5px}
+.th{position:relative;cursor:pointer;border-radius:6px;overflow:hidden;border:2px solid transparent}
+.th:hover{border-color:var(--accent)}
+.th img{width:100%;aspect-ratio:1;display:block;object-fit:cover;background:var(--line)}
+.th .lab{position:absolute;left:3px;top:3px;font-size:10.5px;background:rgba(0,0,0,.6);color:#fff;padding:0 4px;border-radius:4px}
+.th .badges{position:absolute;left:3px;right:3px;bottom:3px;display:flex;justify-content:space-between;gap:3px}
+.badge{font-size:11px;font-weight:600;padding:0 4px;border-radius:4px;color:#fff;font-variant-numeric:tabular-nums}
+.th.ref{border-color:var(--ref)}
+.pager{display:flex;gap:8px;align-items:center}
+.muted{color:var(--muted)}
+/* modal */
+#modal{position:fixed;inset:0;background:rgba(10,12,15,.72);display:none;z-index:20}
+#modal.on{display:flex}
+.mbox{margin:auto;width:min(1500px,97vw);height:min(940px,95vh);background:var(--bg);border-radius:12px;display:grid;
+  grid-template-columns:120px 1fr 400px;grid-template-rows:auto 1fr;overflow:hidden;border:1px solid var(--line)}
+.mhead{grid-column:1/4;padding:10px 14px;border-bottom:1px solid var(--line);display:flex;gap:14px;align-items:flex-start}
+.mhead .cap{flex:1;font-size:13px}
+.strip{padding:8px;display:flex;flex-direction:column;gap:7px;overflow:auto;border-right:1px solid var(--line)}
+.strip .th{border-width:2px}
+.strip .th.sel{border-color:var(--accent)}
+.viewer{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0}
+.ctl{display:flex;gap:6px 12px;flex-wrap:wrap;padding:8px 12px;border-bottom:1px solid var(--line);font-size:12.5px;align-items:center}
+.ctl label{display:flex;gap:4px;align-items:center;cursor:pointer}
+.svgwrap{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:8px}
+svg#view{width:100%;height:100%;background:var(--panel);border-radius:8px}
+#tip{position:fixed;pointer-events:none;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font-size:12px;display:none;z-index:30;font-variant-numeric:tabular-nums;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+.side{overflow:auto;padding:10px 12px;border-left:1px solid var(--line);display:flex;flex-direction:column;gap:10px}
+.formula{font:12.5px ui-monospace,Menlo,monospace;color:var(--muted)}
+.wf{width:100%}
+.note{font-size:12px;color:var(--muted)}
+.vprow{display:grid;grid-template-columns:14px 1fr auto auto;gap:8px;font-size:12.5px;align-items:center;font-variant-numeric:tabular-nums}
+.spin{color:var(--muted);font-size:13px;padding:20px}
+kbd{font:11px ui-monospace,monospace;border:1px solid var(--line);border-radius:4px;padding:0 4px}
+</style>
+</head>
+<body>
+<header>
+  <h1>VP perspective reward: pairs</h1>
+  <span class="sub" id="hsub">loading…</span>
+</header>
+<div class="bar">
+  <select id="fset"><option value="">all sets</option></select>
+  <select id="fsplit"><option value="">all splits</option></select>
+  <input type="search" id="fq" placeholder="search caption / pair id / scene">
+  <label class="muted">sort
+    <select id="fsort">
+      <option value="dG">ΔG = ref − mean twin</option>
+      <option value="refG">reference G</option>
+      <option value="twinG">mean twin G</option>
+      <option value="minTwinG">worst twin G</option>
+      <option value="spread">twin G spread (max−min)</option>
+      <option value="twinR">mean twin R</option>
+      <option value="floor">twins with floor active (P&gt;0)</option>
+      <option value="id">pair id</option>
+    </select></label>
+  <button id="fdir" title="toggle order">↓ desc</button>
+  <span class="grow"></span>
+  <div class="pager"><button id="prev">‹</button><span id="pinfo" class="muted"></span><button id="next">›</button></div>
+</div>
+<div class="summary" id="summary"></div>
+<div class="grid" id="grid"></div>
+
+<div id="modal"><div class="mbox">
+  <div class="mhead"><div class="cap" id="mcap"></div>
+    <span class="note"><kbd>←</kbd><kbd>→</kbd> image · <kbd>↑</kbd><kbd>↓</kbd> pair · <kbd>Esc</kbd></span>
+    <button id="mclose">✕</button></div>
+  <div class="strip" id="mstrip"></div>
+  <div class="viewer">
+    <div class="ctl">
+      <span class="muted">colour</span>
+      <label><input type="radio" name="cmode" value="vp" checked>by VP</label>
+      <label><input type="radio" name="cmode" value="z">by z</label>
+      <label><input type="radio" name="cmode" value="contrib">by G penalty</label>
+      <span class="muted">│</span>
+      <label><input type="checkbox" id="cviol" checked>violators</label>
+      <label><input type="checkbox" id="cunasg" checked>unassigned</label>
+      <label><input type="checkbox" id="craw">raw detections</label>
+      <label><input type="checkbox" id="crays">rays to VPs</label>
+      <label><input type="checkbox" id="czoom">zoom out</label>
+      <label><input type="checkbox" id="cdim" checked>dim image</label>
+      <label><input type="checkbox" id="clines" checked>lines</label>
+    </div>
+    <div class="svgwrap"><svg id="view" xmlns="http://www.w3.org/2000/svg"></svg></div>
+  </div>
+  <div class="side" id="side"></div>
+</div></div>
+<div id="tip"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let D, C, pairs = [], view = [], page = 0, dir = -1, cur = null;
+const PER = 24;
+const fmt = (x, d = 3) => x == null || Number.isNaN(x) ? "–" : (+x).toFixed(d);
+const sgn = (x, d = 2) => x == null ? "–" : (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(d);
+const mean = a => a.length ? a.reduce((s, x) => s + x, 0) / a.length : NaN;
+const median = a => { if (!a.length) return NaN; const b = [...a].sort((x, y) => x - y), m = b.length >> 1; return b.length % 2 ? b[m] : (b[m - 1] + b[m]) / 2; };
+function gColor(g){ if (g == null) return "#666"; const t = Math.max(0, Math.min(1, (g - 0.45) / 0.45)); return `hsl(${t * 130},62%,40%)`; }
+function rColor(r){ if (r == null) return "#666"; const t = Math.max(0, Math.min(1, (r + 2.5) / 5)); return `hsl(${t * 130},55%,38%)`; }
+function zColor(z){ const t = Math.min(z, 10) / 10; // green -> yellow -> red
+  const h = t < .3 ? 130 - (t / .3) * 70 : 60 - ((t - .3) / .7) * 60; return `hsl(${h},80%,${t < .3 ? 38 : 47}%)`; }
+
+fetch("/api/pairs").then(r => r.json()).then(d => {
+  D = d; C = d.const; pairs = d.pairs;
+  for (const p of pairs) {
+    const tg = p.twins.map(t => t.G_used);
+    p.refG = p.ref.G_used; p.twinG = mean(tg); p.dG = p.refG - p.twinG;
+    p.minTwinG = Math.min(...tg); p.spread = Math.max(...tg) - Math.min(...tg);
+    p.twinR = mean(p.twins.map(t => t.R ?? t.R_noQ));
+    p.floor = p.twins.filter(t => t.P > 0).length;
+    p.hay = (p.pair_id + " " + p.scene + " " + p.caption).toLowerCase();
+  }
+  const sets = [...new Set(pairs.map(p => p.set))].sort(), splits = [...new Set(pairs.map(p => p.split))].sort();
+  for (const s of sets) $("#fset").add(new Option(s, s));
+  for (const s of splits) $("#fsplit").add(new Option(s, s));
+  $("#hsub").textContent = `${pairs.length} pairs · ${pairs.length + pairs.reduce((s, p) => s + p.twins.length, 0)} images · stored G/Lc from DeepLSD · ` +
+    (D.quality ? "quality scores loaded" : "no PickScore/aesthetic loaded → R shown without the 0.25·zQ term");
+  refresh();
+});
+
+function refresh(){
+  const fs = $("#fset").value, fp = $("#fsplit").value, q = $("#fq").value.trim().toLowerCase(), k = $("#fsort").value;
+  view = pairs.filter(p => (!fs || p.set === fs) && (!fp || p.split === fp) && (!q || p.hay.includes(q)));
+  view.sort((a, b) => k === "id" ? dir * -1 * a.pair_id.localeCompare(b.pair_id) : dir * ((a[k] ?? -1e9) - (b[k] ?? -1e9)));
+  page = Math.min(page, Math.max(0, Math.ceil(view.length / PER) - 1));
+  summary(); renderGrid();
+}
+for (const id of ["#fset", "#fsplit", "#fsort"]) $(id).onchange = () => { page = 0; refresh(); };
+$("#fq").oninput = () => { page = 0; refresh(); };
+$("#fdir").onclick = () => { dir = -dir; $("#fdir").textContent = dir < 0 ? "↓ desc" : "↑ asc"; refresh(); };
+$("#prev").onclick = () => { if (page > 0) { page--; renderGrid(); scrollTo(0, 0); } };
+$("#next").onclick = () => { if ((page + 1) * PER < view.length) { page++; renderGrid(); scrollTo(0, 0); } };
+
+function summary(){
+  const refs = view.map(p => p.ref), twins = view.flatMap(p => p.twins);
+  const rG = refs.map(x => x.G_used), tG = twins.map(x => x.G_used);
+  // histogram
+  const lo = 0.3, hi = 1.0, nb = 35, w = 520, h = 110, bw = w / nb;
+  const hist = a => { const c = Array(nb).fill(0); for (const g of a) { const i = Math.floor((g - lo) / (hi - lo) * nb); c[Math.max(0, Math.min(nb - 1, i))]++; } return c.map(x => x / Math.max(1, a.length)); };
+  const hr = hist(rG), ht = hist(tG), mx = Math.max(...hr, ...ht, 1e-9);
+  let bars = "";
+  for (let i = 0; i < nb; i++) {
+    bars += `<rect x="${i * bw + 1}" y="${h - ht[i] / mx * h}" width="${bw - 2}" height="${ht[i] / mx * h}" fill="${css("--twin")}" opacity=".55"/>`;
+    bars += `<rect x="${i * bw + bw * .3}" y="${h - hr[i] / mx * h}" width="${bw * .4}" height="${hr[i] / mx * h}" fill="${css("--ref")}"/>`;
+  }
+  const xm = (C.G_MEAN - lo) / (hi - lo) * w;
+  bars += `<line x1="${xm}" x2="${xm}" y1="0" y2="${h}" stroke="${css("--muted")}" stroke-dasharray="3 3"/>`;
+  let ticks = ""; for (let g = 0.3; g <= 1.0001; g += 0.1) ticks += `<text x="${(g - lo) / (hi - lo) * w}" y="${h + 13}" font-size="10" text-anchor="middle" fill="${css("--muted")}">${g.toFixed(1)}</text>`;
+  const pct = a => a.length ? (100 * a.filter(x => x).length / a.length).toFixed(1) + "%" : "–";
+  const win = view.length ? (100 * view.filter(p => p.dG > 0).length / view.length).toFixed(1) + "%" : "–";
+  $("#summary").innerHTML = `
+  <div class="card"><h3>G distribution (filtered)</h3>
+    <svg viewBox="0 -4 ${w} ${h + 18}" style="width:100%;height:auto">${bars}${ticks}</svg>
+    <div class="legend"><span><i class="sw" style="background:var(--ref)"></i>reference</span><span><i class="sw" style="background:var(--twin);opacity:.6"></i>SD3.5 twin</span><span>dashed = G mean used for z(G) (${C.G_MEAN.toFixed(3)})</span></div></div>
+  <div class="card"><h3>Pairs shown</h3><div class="big">${view.length}</div><div class="kv"><span>images</span><span>${refs.length + twins.length}</span><span>G undefined</span><span>${refs.concat(twins).filter(x => x.G_nan).length}</span></div></div>
+  <div class="card"><h3>Median G</h3><div class="kv"><span>reference</span><span>${fmt(median(rG))}</span><span>twin</span><span>${fmt(median(tG))}</span><span>ref &gt; twin mean</span><span>${win}</span></div></div>
+  <div class="card"><h3>Structure floor</h3><div class="kv"><span>twins with P&gt;0</span><span>${pct(twins.map(t => t.P > 0))}</span><span>refs with P&gt;0</span><span>${pct(refs.map(t => t.P > 0))}</span><span>mean P (twins)</span><span>${fmt(mean(twins.map(t => t.P)))}</span></div></div>
+  <div class="card"><h3>Mean R${D.quality ? "" : " (no zQ)"}</h3><div class="kv"><span>reference</span><span>${fmt(mean(refs.map(x => x.R ?? x.R_noQ)), 2)}</span><span>twin</span><span>${fmt(mean(twins.map(x => x.R ?? x.R_noQ)), 2)}</span><span>mean z(G) twin</span><span>${fmt(mean(twins.map(x => x.zG)), 2)}</span></div></div>`;
+}
+
+function thumb(p, im, i, cls = ""){
+  const lab = im.role === "reference" ? "ref" : "s" + im.seed, R = im.R ?? im.R_noQ;
+  return `<div class="th ${im.role === "reference" ? "ref" : ""} ${cls}" data-pair="${p.pair_id}" data-i="${i}" title="${im.file}">
+    <img loading="lazy" src="/img/${im.file}"><span class="lab">${lab}${im.P > 0 ? " · floor" : ""}${im.G_nan ? " · G∅" : ""}</span>
+    <div class="badges"><span class="badge" style="background:${gColor(im.G)}">G ${fmt(im.G, 2)}</span><span class="badge" style="background:${rColor(R)}">R ${sgn(R, 1)}</span></div></div>`;
+}
+const imgs = p => [p.ref, ...p.twins];
+function renderGrid(){
+  const sl = view.slice(page * PER, (page + 1) * PER);
+  $("#pinfo").textContent = view.length ? `${page * PER + 1}–${Math.min(view.length, (page + 1) * PER)} of ${view.length}` : "0";
+  $("#grid").innerHTML = sl.map(p => `<div class="pair"><div class="hd"><span><b>${p.pair_id}</b> · ${p.split}${p.subset ? " · " + p.subset : ""} · ${p.scene}</span>
+     <span>ΔG ${sgn(p.dG, 3)} · twin mean ${fmt(p.twinG)}</span></div><div class="cap">${esc(p.caption)}</div>
+     <div class="thumbs">${imgs(p).map((im, i) => thumb(p, im, i)).join("")}</div></div>`).join("") || `<p class="muted">No pairs match.</p>`;
+}
+function esc(s){ return s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+$("#grid").onclick = e => { const t = e.target.closest(".th"); if (t) openImg(pairs.find(p => p.pair_id === t.dataset.pair), +t.dataset.i); };
+
+// ---------------- modal ----------------
+function openImg(p, i){
+  cur = { p, i, a: null };
+  $("#modal").classList.add("on");
+  $("#mcap").innerHTML = `<b>${p.pair_id}</b> <span class="muted">· ${p.set} · ${p.split} · ${p.scene}</span><br>${esc(p.caption)}`;
+  $("#mstrip").innerHTML = imgs(p).map((im, j) => thumb(p, im, j, j === i ? "sel" : "")).join("");
+  const im = imgs(p)[i];
+  $("#view").innerHTML = ""; side(im, null);
+  $("#view").setAttribute("viewBox", "0 0 512 512");
+  $("#view").innerHTML = `<image href="/img/${im.file}" width="512" height="512"/>`;
+  const key = im.file;
+  fetch("/api/analyse?file=" + encodeURIComponent(im.file)).then(r => r.ok ? r.json() : r.text().then(t => { throw new Error(t); }))
+    .then(a => { if (cur && imgs(cur.p)[cur.i].file === key) { cur.a = a; draw(); side(im, a); } })
+    .catch(e => { $("#side").insertAdjacentHTML("beforeend", `<div class="card note">overlay failed: ${esc(String(e.message))}</div>`); });
+}
+$("#mstrip").onclick = e => { const t = e.target.closest(".th"); if (t) openImg(cur.p, +t.dataset.i); };
+$("#mclose").onclick = () => { $("#modal").classList.remove("on"); cur = null; };
+$("#modal").onclick = e => { if (e.target.id === "modal") $("#mclose").onclick(); };
+document.addEventListener("keydown", e => {
+  if (!cur) return;
+  if (e.key === "Escape") $("#mclose").onclick();
+  else if (e.key === "ArrowRight") openImg(cur.p, (cur.i + 1) % 5);
+  else if (e.key === "ArrowLeft") openImg(cur.p, (cur.i + 4) % 5);
+  else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    const k = view.indexOf(cur.p) + (e.key === "ArrowDown" ? 1 : -1);
+    if (k >= 0 && k < view.length) { openImg(view[k], cur.i); e.preventDefault(); }
+  }
+});
+for (const el of document.querySelectorAll(".ctl input")) el.onchange = () => cur && cur.a && draw();
+
+function draw(){
+  const a = cur.a, im = imgs(cur.p)[cur.i], svg = $("#view");
+  const vpc = [css("--vp1"), css("--vp2"), css("--vp3")];
+  const mode = document.querySelector("input[name=cmode]:checked").value;
+  const on = id => $(id).checked;
+  let x0 = 0, y0 = 0, x1 = 512, y1 = 512;
+  if (on("#czoom")) {
+    let span = 384;
+    for (const v of a.vps) if (v.px) span = Math.max(span, Math.abs(v.px[0] - 256) * 1.12, Math.abs(v.px[1] - 256) * 1.12);
+    x0 = y0 = 256 - span; x1 = y1 = 256 + span;
+  }
+  const W = x1 - x0, half = W / 2;
+  let s = `<defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="context-stroke"/></marker></defs>`;
+  s += `<image href="/img/${im.file}" width="512" height="512" opacity="${on("#cdim") ? .45 : 1}"/>`;
+  if (on("#czoom")) s += `<rect width="512" height="512" fill="none" stroke="${css("--muted")}" vector-effect="non-scaling-stroke"/>`;
+  const L = (x, ext = "") => `<line x1="${x[0]}" y1="${x[1]}" x2="${x[2]}" y2="${x[3]}" vector-effect="non-scaling-stroke" ${ext}/>`;
+  if (on("#craw")) s += `<g stroke="${css("--muted")}" stroke-width="1" opacity=".7">${a.raw.map(x => L(x)).join("")}</g>`;
+  const has = a.z != null;
+  if (has && on("#crays")) {
+    let r = "";
+    a.vps.forEach((v, k) => {
+      a.xy.forEach((x, i) => {
+        if (!a.asg[i] || a.arg[i] !== k) return;
+        const mx = (x[0] + x[2]) / 2, my = (x[1] + x[3]) / 2;
+        if (v.px) r += L([mx, my, v.px[0], v.px[1]], `stroke="${vpc[k]}"`);
+        else { const e = 4 * W; r += L([mx - v.dir[0] * e, my - v.dir[1] * e, mx + v.dir[0] * e, my + v.dir[1] * e], `stroke="${vpc[k]}"`); }
+      });
+    });
+    s += `<g stroke-width=".6" opacity=".35">${r}</g>`;
+  }
+  if (on("#clines") && a.xy.length) {
+    const maxL = has ? Math.max(...a.L) : 1, maxV = has ? Math.max(...a.viol, 1e-12) : 1;
+    let viol = "", seg = "";
+    a.xy.forEach((x, i) => {
+      const asg = has && a.asg[i];
+      if (!asg && !on("#cunasg")) return;
+      let col = css("--unasg"), wd = 1.2;
+      if (asg) {
+        wd = mode === "vp" ? 2 : 1.4 + 3.2 * a.L[i] / maxL;
+        col = mode === "vp" ? vpc[a.arg[i]] : mode === "z" ? zColor(a.z[i]) : `hsl(0,75%,${85 - 45 * Math.sqrt(a.viol[i] / maxV)}%)`;
+        if (on("#cviol") && a.z[i] > 3) viol += L(x, `stroke="${css("--bad")}" stroke-width="${wd + 5}" opacity=".45"`);
+      }
+      seg += L(x, `stroke="${col}" stroke-width="${wd}" data-i="${i}" class="seg"`);
+    });
+    s += viol + seg;
+  }
+  if (has) a.vps.forEach((v, k) => {
+    if (v.px) {
+      const r = W / 512 * 9, [cx, cy] = v.px;
+      const star = Array.from({ length: 10 }, (_, j) => { const ang = -Math.PI / 2 + j * Math.PI / 5, rr = j % 2 ? r * .45 : r; return `${cx + rr * Math.cos(ang)},${cy + rr * Math.sin(ang)}`; }).join(" ");
+      s += `<polygon points="${star}" fill="${vpc[k]}" stroke="#000" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+      s += `<text x="${cx + r}" y="${cy - r}" font-size="${W / 512 * 14}" font-weight="700" fill="${vpc[k]}" paint-order="stroke" stroke="${css("--panel")}" stroke-width="${W / 512 * 3}">VP${k + 1}</text>`;
+      if (cx < x0 || cx > x1 || cy < y0 || cy > y1) { // off view: arrow at the border
+        const d = [cx - 256, cy - 256], n = Math.hypot(...d); arrow(k, [d[0] / n, d[1] / n], `VP${k + 1} (${Math.round(cx)}, ${Math.round(cy)})`);
+      }
+    } else arrow(k, v.dir, `VP${k + 1} → ∞`);
+  });
+  function arrow(k, d, label){
+    const a0 = [256 + d[0] * half * .68, 256 + d[1] * half * .68], a1 = [256 + d[0] * half * .9, 256 + d[1] * half * .9];
+    s += `<line x1="${a0[0]}" y1="${a0[1]}" x2="${a1[0]}" y2="${a1[1]}" stroke="${vpc[k]}" stroke-width="3.5" marker-end="url(#ah)" vector-effect="non-scaling-stroke"/>`;
+    s += `<text x="${a1[0]}" y="${a1[1]}" dy="${d[1] > 0 ? -8 : 16}" text-anchor="middle" font-size="${W / 512 * 13}" font-weight="700" fill="${vpc[k]}" paint-order="stroke" stroke="${css("--panel")}" stroke-width="${W / 512 * 3}">${label}</text>`;
+  }
+  svg.setAttribute("viewBox", `${x0} ${y0} ${W} ${y1 - y0}`);
+  svg.innerHTML = s;
+}
+// hover tooltip on segments
+$("#view").addEventListener("mousemove", e => {
+  const t = e.target.closest(".seg"), tip = $("#tip");
+  if (!t || !cur || !cur.a) { tip.style.display = "none"; return; }
+  const a = cur.a, i = +t.dataset.i;
+  tip.innerHTML = a.z == null ? "no VP fit" : `segment #${i} · L ${a.L[i].toFixed(1)}px<br>` + (a.asg[i]
+    ? `VP${a.arg[i] + 1} · angle err ${a.err[i].toFixed(2)}° · z ${a.z[i].toFixed(2)} ${a.z[i] > 3 ? "<b style='color:var(--bad)'>violator</b>" : "inlier"}<br>share of G penalty ${(100 * a.viol[i] / Math.max(1e-12, a.viol.reduce((s, x) => s + x, 0))).toFixed(1)}%`
+    : `unassigned (best ${a.err[i].toFixed(1)}° &gt; 15°) · not in G`);
+  tip.style.display = "block"; tip.style.left = e.clientX + 14 + "px"; tip.style.top = e.clientY + 12 + "px";
+});
+$("#view").addEventListener("mouseleave", () => $("#tip").style.display = "none");
+
+function side(im, a){
+  const R = im.R ?? im.R_noQ, terms = [["z(G)", im.zG], ["−4·P", -C.LAMBDA_F * im.P], ["+0.25·zQ", im.zQ == null ? null : C.LAMBDA_Q * im.zQ], [im.R == null ? "R (no zQ)" : "R", R]];
+  // waterfall-style diverging bars
+  const w = 370, rowH = 24, sc = 40, x0 = 175;
+  let wf = `<line x1="${x0}" x2="${x0}" y1="0" y2="${terms.length * rowH}" stroke="${css("--muted")}"/>`;
+  terms.forEach(([n, v], j) => {
+    const y = j * rowH, last = j === terms.length - 1;
+    wf += `<text x="0" y="${y + 16}" font-size="12.5" fill="${css("--ink")}" ${last ? 'font-weight="700"' : ""}>${n}</text>`;
+    if (v == null) { wf += `<text x="${x0 + 6}" y="${y + 16}" font-size="12" fill="${css("--muted")}">n/a (no PickScore / aesthetic)</text>`; return; }
+    const len = Math.max(-x0 + 75, Math.min(w - x0 - 50, v * sc));
+    wf += `<rect x="${Math.min(x0, x0 + len)}" y="${y + 4}" width="${Math.abs(len)}" height="${rowH - 8}" rx="3" fill="${v >= 0 ? css("--pos") : css("--neg")}" opacity="${last ? 1 : .8}"/>`;
+    wf += `<text x="${v >= 0 ? x0 + len + 5 : x0 + len - 5}" text-anchor="${v >= 0 ? "start" : "end"}" y="${y + 16}" font-size="12" font-weight="${last ? 700 : 500}" fill="${css("--ink")}">${sgn(v, 2)}</text>`;
+  });
+  const thr = C.ALPHA * (im.Lc_base || 0), lmax = Math.max(im.Lc, im.Lc_base || 0, 1) * 1.1, bw = 360;
+  const floorBar = im.Lc_base ? `<svg viewBox="0 0 ${bw} 46" style="width:100%">
+      <rect x="0" y="6" width="${bw}" height="16" rx="4" fill="${css("--line")}"/>
+      <rect x="0" y="6" width="${im.Lc / lmax * bw}" height="16" rx="4" fill="${im.P > 0 ? css("--neg") : css("--pos")}"/>
+      <line x1="${thr / lmax * bw}" x2="${thr / lmax * bw}" y1="1" y2="27" stroke="${css("--ink")}" stroke-width="2"/>
+      <line x1="${im.Lc_base / lmax * bw}" x2="${im.Lc_base / lmax * bw}" y1="3" y2="25" stroke="${css("--muted")}" stroke-dasharray="3 2"/>
+      <text x="${thr / lmax * bw}" y="40" font-size="10.5" text-anchor="middle" fill="${css("--ink")}">0.8·Lc_base</text>
+      <text x="${Math.min(bw - 30, im.Lc_base / lmax * bw + 4)}" y="40" font-size="10.5" fill="${css("--muted")}">Lc_base</text></svg>` : "";
+  const nt = im.role === "twin" ? "mean Lc of the pair's other 3 twins (leave-one-out)" : "mean Lc of the pair's 4 twins";
+  let h = `
+  <div class="card"><h3>Reward ${im.role === "reference" ? "(reference image)" : "(twin s" + im.seed + ")"}</h3>
+    <div class="formula">R = z(G) − 4·P + 0.25·zQ</div>
+    <svg class="wf" viewBox="0 0 ${w} ${terms.length * rowH}">${wf}</svg>
+    ${im.R == null ? `<div class="note">PickScore / aesthetic are not in metadata.csv (GPU scorers), so R here leaves out the quality term. Start the dashboard with <code>--quality</code> to add it.</div>` : ""}</div>
+  <div class="card"><h3>Geometry G (stored, DeepLSD)</h3>
+    <div class="kv"><span>G</span><span><b style="color:${gColor(im.G)}">${im.G_nan ? "undefined → " + C.G_NAN_FILL.toFixed(4) : fmt(im.G, 4)}</b></span>
+    <span>z(G)</span><span>(${fmt(im.G_used, 4)} − ${C.G_MEAN.toFixed(4)}) / ${C.G_STD.toFixed(4)} = <b>${sgn(im.zG)}</b></span>
+    <span>segments</span><span>${im.n_kept} kept of ${im.n_det} detected</span></div>
+    <div class="note">G = 1 − Σw·σ((z−3)/0.5) / Σw over segments assigned to a VP, w = (L/100)².</div></div>
+  <div class="card"><h3>Structure floor P</h3>${floorBar}
+    <div class="kv"><span>Lc</span><span>${fmt(im.Lc, 0)} px</span><span>Lc_base</span><span>${fmt(im.Lc_base, 0)} px</span>
+    <span>P</span><span>max(0, 1 − Lc/(0.8·Lc_base)) = <b>${fmt(im.P, 3)}</b></span><span>−4·P</span><span><b>${sgn(-C.LAMBDA_F * im.P)}</b></span></div>
+    <div class="note">Lc_base = ${nt} (FINAL.md §3 validation rule).</div></div>
+  <div class="card"><h3>Quality zQ</h3>${im.zQ == null ? `<div class="note">Not available. Needs flow_grpo's PickScore and aesthetic scorers on a GPU.</div>` :
+    `<div class="kv"><span>PickScore (×26)</span><span>${fmt(im.pickscore, 3)} → z ${sgn((im.pickscore - C.PICK_MEAN) / C.PICK_STD)}</span>
+     <span>aesthetic</span><span>${fmt(im.aesthetic, 3)} → z ${sgn((im.aesthetic - C.AES_MEAN) / C.AES_STD)}</span><span>zQ</span><span><b>${sgn(im.zQ)}</b></span></div>`}</div>`;
+  if (!a) h += `<div class="card spin">fitting lines and vanishing points…</div>`;
+  else {
+    const vpc = [css("--vp1"), css("--vp2"), css("--vp3")], has = a.z != null;
+    const tot = has ? a.viol.reduce((s, x) => s + x, 0) : 0;
+    let rows = "";
+    if (has) a.vps.forEach((v, k) => {
+      const idx = a.asg.map((x, i) => x && a.arg[i] === k ? i : -1).filter(i => i >= 0);
+      const len = idx.reduce((s, i) => s + a.L[i], 0), nv = idx.filter(i => a.z[i] > 3).length, pv = idx.reduce((s, i) => s + a.viol[i], 0);
+      rows += `<div class="vprow"><i class="sw" style="background:${vpc[k]}"></i><span>VP${k + 1} ${v.px ? `(${Math.round(v.px[0])}, ${Math.round(v.px[1])})` : "∞ dir (" + v.dir.map(x => x.toFixed(2)).join(", ") + ")"}</span>
+        <span>${idx.length} segs · ${nv} viol.</span><span title="share of G's penalty">${tot ? (100 * pv / tot).toFixed(0) : 0}%</span></div>`;
+    });
+    const nun = has ? a.asg.filter(x => !x).length : a.xy.length;
+    h += `<div class="card"><h3>Overlay fit (${esc(a.detector)})</h3>
+      <div class="kv"><span>G (this fit)</span><span><b>${fmt(a.G, 4)}</b> <span class="muted">vs stored ${fmt(im.G, 4)}</span></span>
+      <span>Lc (this fit)</span><span>${fmt(a.Lc, 0)} px <span class="muted">vs stored ${fmt(im.Lc, 0)}</span></span>
+      <span>segments</span><span>${a.raw.length} detected · ${a.xy.length} kept · ${nun} unassigned</span></div>
+      <div style="margin-top:6px;display:flex;flex-direction:column;gap:3px">${rows || '<span class="note">no vanishing point found (G undefined)</span>'}</div>
+      <div class="note" style="margin-top:6px">${/stand-in/.test(a.detector) ? "Lines here come from OpenCV LSD because DeepLSD isn't installed on this machine. The fit and scoring steps are the frozen ones, but the detected lines differ, so this G won't match the stored value exactly." : "Same detector and fit as the stored values. The stored G was scored on lossless PNGs, while these files are JPEG q95, which per the dataset README shifts G by a median of ~0.02 (up to ~0.2)."}
+      The last column is each VP's share of the G penalty. Hover a segment to see its z.</div></div>`;
+  }
+  $("#side").innerHTML = h;
+}
+</script>
+</body>
+</html>
