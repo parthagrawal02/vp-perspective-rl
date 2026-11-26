@@ -38,6 +38,11 @@ squeue -u $USER;  tail -f slurm-vp-nft-<id>.out
 Outputs: `$VP_DATA/outputs/rl/<RUN>/nft_logs/` (`vp_epoch_stats.csv`, `vp_eval_stats.csv`, `samples/epoch_NNNN/`),
 checkpoints `$VP_DATA/checkpoints/rl/<RUN>/`. `WANDB_MODE` defaults to offline.
 
+## Don't auto-load the pytorch-conda module
+The NCSA guide suggests adding `module load pytorch-conda; conda activate ...` to `~/.bashrc`. **Don't, for this project**:
+that module puts NCSA's PyTorch 2.8 env on the library path, which breaks the pytlsd build and can shadow the env's torch 2.7.1.
+Our scripts call `$VP_ENV/bin/python` directly and never need an activated env.
+
 ## Budget (shared by the whole class)
 A40 batch = 0.5 units per GPU-hour, so one 4-GPU node costs 2 units/hour: smoke test ~1-2, `lcbase` (validated, ~10k images)
 roughly 6-12, a 24 h training run ~48. Run `accounts` before submitting. Debug with the smoke test, not the 24 h job.

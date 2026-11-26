@@ -3,4 +3,3 @@
 export VP_DATA="${VP_DATA:-/work/hdd/bjop/$USER/vp-data}"
 export VP_ENV="${VP_ENV:-$HOME/envs/nft-vp}"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env.example.sh"
-export MAMBA=conda

@@ -16,6 +16,7 @@
 #SBATCH -o slurm-%x-%j.out
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:-$PWD}"
+module unload pytorch-conda 2>/dev/null || true   # its PyTorch 2.8 libraries would shadow the env's torch 2.7.1
 source config/env.sh
 export VP_REWARD=${VP_REWARD:-v1}
 export VP_LC_BASE=${VP_LC_BASE:-$VP_NFT_DIR/dataset/vp_hypersim/lc_base_validated.json}

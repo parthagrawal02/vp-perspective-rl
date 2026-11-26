@@ -13,6 +13,7 @@
 #SBATCH -o slurm-%x-%j.out
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:-$PWD}"
+module unload pytorch-conda 2>/dev/null || true   # its PyTorch 2.8 libraries would shadow the env's torch 2.7.1
 source config/env.sh
 PY="$VP_ENV/bin/python"
 nvidia-smi --query-gpu=name,memory.total --format=csv

@@ -5,14 +5,19 @@
 # `$VP_ENV/bin/huggingface-cli login`; then re-run this script (every step is idempotent).
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
-module load pytorch-conda                                   # provides conda (NCSA guide)
 [ -f "$REPO/config/env.sh" ] || cp "$REPO/rl/delta/env.delta.sh" "$REPO/config/env.sh"
 source "$REPO/config/env.sh"
 echo "VP_DATA=$VP_DATA  VP_ENV=$VP_ENV"
 mkdir -p "$VP_DATA" "$(dirname "$VP_ENV")"
 
-# Env + DeepLSD + patched DiffusionNFT + vp_reward + DeepLSD / aesthetic weights (A40 = sm_86, covered by the cu128 wheels)
-MAMBA=conda bash "$REPO/envs/setup_nft_vp.sh"
+# The pytorch-conda module is needed ONLY for the `conda` command that creates the env. Keep it out of everything else: it puts
+# NCSA's own PyTorch 2.8 env on the library path, which breaks the pytlsd link and would shadow our torch 2.7.1 at run time.
+if [ ! -x "$VP_ENV/bin/python" ]; then
+  ( module load pytorch-conda && conda create -y -p "$VP_ENV" -c conda-forge python=3.10.16 )
+fi
+# Env + DeepLSD + patched DiffusionNFT + vp_reward + DeepLSD / aesthetic weights (A40 = sm_86, covered by the cu128 wheels).
+# The env exists now, so setup_nft_vp.sh never calls MAMBA.
+MAMBA=false bash "$REPO/envs/setup_nft_vp.sh"
 
 # Pre-fetch the Hugging Face models into $HF_HOME on /work, so compute jobs never wait on downloads
 "$VP_ENV/bin/python" - <<'EOF'
