@@ -17,6 +17,11 @@ The integration differs from what ran in Task 12 in one way: `rewards.py` no lon
 `sys.path`, because both are pip-installed now. DiffusionNFT is Apache-2.0; `LICENSE-DiffusionNFT-Apache-2.0.txt` is its license
 (the top-level README explains what it allows).
 
+**Reward version.** `VP_REWARD=v1` (default) trains on the frozen reward; `VP_REWARD=v2` on the experimental
+`vp_reward/reward_v2.py` (frozen geometry + an upper structure cap against densification; not frozen, see
+`experiments/task15/NOTES.md`). `rl/lcbase.py --sampler validated` builds the floor reference with the validation-twin sampler
+(40 steps, CFG 4.5) into `lc_base_validated.json`. **NCSA Delta:** `rl/delta/README.md` (setup, Slurm jobs, budget).
+
 ## Steps
 ```bash
 source config/env.sh

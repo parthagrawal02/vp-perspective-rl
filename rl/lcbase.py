@@ -1,12 +1,21 @@
-"""PROVISIONAL (floor reference being fixed). Floor reference Lc_base per prompt: base SD3.5-M sampled exactly like
-DiffusionNFT training rollouts (config sd3_vp sampler), 4 seeds per prompt, Lc via vp_reward.final.
-    python rl/lcbase.py <shard> <nshard>   (one GPU per shard)    python rl/lcbase.py merge  -> $VP_NFT_DIR/dataset/vp_hypersim/lc_base.json
+"""PROVISIONAL (floor reference being fixed). Floor reference Lc_base per prompt: mean Lc (vp_reward.final) of 4 base SD3.5-M
+samples per prompt. Two samplers ($VP_LCBASE_SAMPLER or --sampler):
+    train      (default, Task 12) exactly like DiffusionNFT training rollouts (config sd3_vp: 10 dpm2 steps, CFG 1.0)
+               -> dataset/vp_hypersim/lc_base.json
+    validated  exactly like the validation twins the floor was calibrated on (data/gen_twins.py: 40 steps, CFG 4.5,
+               fp16 transformer/text encoders, fp32 VAE, CPU generator per seed)    -> dataset/vp_hypersim/lc_base_validated.json
+    python rl/lcbase.py <shard> <nshard> [--sampler S]   (one GPU per shard)    python rl/lcbase.py merge [--sampler S]
 
 Origin: experiments/task12/lcbase.py (same logic; only paths / CLI arguments changed)."""
 from vp_reward.paths import DATA, NFT_DIR
 import sys, os, json, pickle, time, numpy as np
 sys.path.insert(0, NFT_DIR)
-O = DATA + "/outputs/task12"; IMG = f"{O}/lcbase_imgs"; DSET = f"{NFT_DIR}/dataset/vp_hypersim"
+SAMPLER = os.environ.get("VP_LCBASE_SAMPLER", "train")
+if "--sampler" in sys.argv:
+    SAMPLER = sys.argv[sys.argv.index("--sampler") + 1]; del sys.argv[sys.argv.index("--sampler"):sys.argv.index("--sampler") + 2]
+assert SAMPLER in ("train", "validated"), SAMPLER
+O = DATA + ("/outputs/task12" if SAMPLER == "train" else "/outputs/lcbase_validated"); IMG = f"{O}/lcbase_imgs"
+DSET = f"{NFT_DIR}/dataset/vp_hypersim"; LC_JSON = f"{DSET}/lc_base.json" if SAMPLER == "train" else f"{DSET}/lc_base_validated.json"
 SEEDS = (0, 1, 2, 3)
 
 
@@ -18,6 +27,8 @@ def prompts():
 
 
 def main(shard, nshard, bs=16):
+    if SAMPLER == "validated":
+        return main_validated(shard, nshard)
     import torch
     from concurrent.futures import ProcessPoolExecutor
     from diffusers import StableDiffusion3Pipeline
@@ -63,6 +74,39 @@ def main(shard, nshard, bs=16):
     pickle.dump(rows, open(f"{O}/lcbase_{shard}.pkl", "wb")); print("LCBASE_DONE", shard, len(rows), f"{time.time()-t0:.0f}s", flush=True)
 
 
+def main_validated(shard, nshard, bs=8):
+    """Same sampler as data/gen_twins.py (the validation twins)."""
+    import torch
+    from concurrent.futures import ProcessPoolExecutor
+    from diffusers import StableDiffusion3Pipeline
+    from PIL import Image
+    from vp_reward import final as F
+    dev = "cuda"
+    pipe = StableDiffusion3Pipeline.from_pretrained("stabilityai/stable-diffusion-3.5-medium")
+    for m in (pipe.transformer, pipe.text_encoder, pipe.text_encoder_2, pipe.text_encoder_3): m.to(dev, torch.float16)
+    pipe.vae.to(dev, torch.float32); pipe.set_progress_bar_config(disable=True)
+    net = F.load_deeplsd(dev); pool = ProcessPoolExecutor(12)
+    jobs = [(sp, p, s) for sp, p in prompts() for s in SEEDS][shard::nshard]
+    os.makedirs(IMG, exist_ok=True)
+    ck = f"{O}/lcbase_{shard}.pkl"
+    rows = pickle.load(open(ck, "rb")) if os.path.exists(ck) else []  # resumable
+    done = {(r["prompt"], r["seed"]) for r in rows}; jobs = [j for j in jobs if (j[1], j[2]) not in done]
+    print("sampler: validated (40 steps, CFG 4.5)", len(jobs), "to do", flush=True); t0 = time.time()
+    for b in range(0, len(jobs), bs):
+        J = jobs[b:b + bs]
+        gens = [torch.Generator("cpu").manual_seed(s) for _, _, s in J]
+        with torch.autocast("cuda", torch.float16), torch.no_grad():
+            ims = pipe([p for _, p, _ in J], num_inference_steps=40, guidance_scale=4.5, height=512, width=512, generator=gens).images
+        u8 = np.stack([np.asarray(im.convert("RGB")) for im in ims])
+        G, Lc = F.geometry_batch(net, u8, dev, pool)
+        for (sp, p, s), x, g, l in zip(J, u8, G, Lc):
+            fn = f"{IMG}/{shard}_{len(rows):05d}.png"; Image.fromarray(x).save(fn)
+            rows.append(dict(split=sp, prompt=p, seed=s, G=float(g), Lc=float(l), img=fn))
+        if (b // bs) % 25 == 0:
+            pickle.dump(rows, open(ck, "wb")); print(shard, b, len(jobs), f"{time.time()-t0:.0f}s", flush=True)
+    pickle.dump(rows, open(ck, "wb")); print("LCBASE_DONE", shard, len(rows), f"{time.time()-t0:.0f}s", flush=True)
+
+
 def merge():
     import glob, pandas as pd
     D = pd.DataFrame([r for f in sorted(glob.glob(f"{O}/lcbase_[0-9]*.pkl")) for r in pickle.load(open(f, "rb"))])
@@ -70,8 +114,8 @@ def merge():
     n = D.groupby("prompt").seed.nunique(); assert (n == len(SEEDS)).all(), n.value_counts()
     m = D.groupby("prompt").Lc.mean()
     exp = {p for _, p in prompts()}; assert set(m.index) == exp, (len(m), len(exp))
-    json.dump({p: float(v) for p, v in m.items()}, open(f"{DSET}/lc_base.json", "w"), indent=0)
-    print("LC_BASE prompts", len(m), "samples", len(D))
+    json.dump({p: float(v) for p, v in m.items()}, open(LC_JSON, "w"), indent=0)
+    print("LC_BASE", SAMPLER, "prompts", len(m), "samples", len(D), "->", LC_JSON)
 
 
 if __name__ == "__main__":

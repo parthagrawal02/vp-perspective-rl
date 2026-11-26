@@ -33,10 +33,10 @@ index 3230c13..2448fd3 100644
 +    )
 +    return config
 diff --git a/flow_grpo/rewards.py b/flow_grpo/rewards.py
-index 647b808..ba42f6c 100644
+index 647b808..1148f9a 100644
 --- a/flow_grpo/rewards.py
 +++ b/flow_grpo/rewards.py
-@@ -253,6 +253,53 @@ def unifiedreward_score_sglang(device):
+@@ -253,6 +253,63 @@ def unifiedreward_score_sglang(device):
      return _fn
  
  
@@ -56,13 +56,23 @@ index 647b808..ba42f6c 100644
 +
 +
 +def vp_perspective(device):
-+    """Frozen perspective reward (vp_reward/FINAL.md) via vp_reward.final.perspective_reward.
-+    Lc_base map: $VP_LC_BASE (default dataset/vp_hypersim/lc_base.json), prompt -> mean Lc of 4 base SD3.5 rollouts.
++    """Perspective reward. $VP_REWARD selects the version: "v1" (default) = the frozen reward (vp_reward/FINAL.md,
++    vp_reward.final.perspective_reward); "v2" = the experimental vp_reward.reward_v2.perspective_reward (adds the upper
++    structure cap P_hi; NOT frozen). Lc_base map: $VP_LC_BASE (default dataset/vp_hypersim/lc_base.json), prompt -> mean Lc of 4 base SD3.5 rollouts.
 +    Returns (R, info); info carries the reward parts + high-frequency image statistics (monitoring only, not in R)."""
 +    import json, multiprocessing, os
 +
 +    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-+    from vp_reward.final import perspective_reward, to_uint8_nhwc  # pip install -e <vp-perspective-rl>/vp_reward
++    from vp_reward.final import to_uint8_nhwc  # pip install -e <vp-perspective-rl>/vp_reward
++
++    version = os.environ.get("VP_REWARD", "v1")
++    if version == "v1":
++        from vp_reward.final import perspective_reward
++    elif version == "v2":
++        from vp_reward.reward_v2 import perspective_reward
++    else:
++        raise ValueError(f"VP_REWARD must be v1 or v2, got {version!r}")
++    print(f"[VP] reward version {version}", flush=True)
 +
 +    # geometry workers must not be forked from this multi-threaded CUDA process
 +    if multiprocessing.get_start_method(allow_none=True) != "forkserver":
@@ -78,8 +88,8 @@ index 647b808..ba42f6c 100644
 +        R, info = fn(images, prompts, metadata)
 +        dt = time.time() - t0
 +        nz, lv = _hf_stats(to_uint8_nhwc(images))
-+        keep = ("G_raw", "G_nan", "zG", "Lc", "Lc_base", "P", "pickscore", "aesthetic", "zQ")
-+        out = {k: np.asarray(info[k], dtype=np.float32) for k in keep}
++        keep = ("G_raw", "G_nan", "zG", "Lc", "Lc_base", "P", "P_hi", "pickscore", "aesthetic", "zQ")
++        out = {k: np.asarray(info[k], dtype=np.float32) for k in keep if k in info}
 +        out["hf_noise"], out["hf_lapvar"] = nz.astype(np.float32), lv.astype(np.float32)
 +        out["t_reward"] = np.full(len(R), dt / max(len(R), 1), np.float32)  # reward wall time, spread over the batch
 +        return R, out
@@ -90,7 +100,7 @@ index 647b808..ba42f6c 100644
  def multi_score(device, score_dict):
      score_functions = {
          "ocr": ocr_score,
-@@ -264,6 +311,7 @@ def multi_score(device, score_dict):
+@@ -264,6 +321,7 @@ def multi_score(device, score_dict):
          "geneval": geneval_score,
          "clipscore": clip_score,
          "hpsv2": hpsv2_score,
@@ -98,7 +108,7 @@ index 647b808..ba42f6c 100644
      }
      score_fns = {}
      for score_name, weight in score_dict.items():
-@@ -291,6 +339,9 @@ def multi_score(device, score_dict):
+@@ -291,6 +349,9 @@ def multi_score(device, score_dict):
                      score_details[f"{key}_accuracy"] = value
              else:
                  scores, rewards = score_fns[score_name](images, prompts, metadata)
@@ -129,10 +139,10 @@ index 261deb8..04cae90 100644
              "hpsv2": 1.0,
          }
 diff --git a/scripts/train_nft_sd3.py b/scripts/train_nft_sd3.py
-index 2a8c273..bcf0463 100644
+index 2a8c273..9bef1fe 100644
 --- a/scripts/train_nft_sd3.py
 +++ b/scripts/train_nft_sd3.py
-@@ -201,6 +201,35 @@ def calculate_zero_std_ratio(prompts, gathered_rewards):
+@@ -201,6 +201,37 @@ def calculate_zero_std_ratio(prompts, gathered_rewards):
      return zero_std_ratio, prompt_std_devs.mean()
  
  
@@ -141,7 +151,7 @@ index 2a8c273..bcf0463 100644
 +    out = {"zero_std_ratio": float(zero_std_ratio)}
 +    R = gathered["avg"][:, 0] if gathered["avg"].ndim == 2 else gathered["avg"]
 +    out["R_mean"], out["R_std"] = float(np.mean(R)), float(np.std(R))
-+    for k in ("zG", "G_raw", "P", "pickscore", "aesthetic", "zQ", "Lc", "Lc_base", "hf_noise", "hf_lapvar"):
++    for k in ("zG", "G_raw", "P", "P_hi", "pickscore", "aesthetic", "zQ", "Lc", "Lc_base", "hf_noise", "hf_lapvar"):
 +        v = gathered.get(f"vp_{k}")
 +        if v is not None:
 +            out[f"{k}_mean"], out[f"{k}_std"] = float(np.nanmean(v)), float(np.nanstd(v))
@@ -149,6 +159,8 @@ index 2a8c273..bcf0463 100644
 +        out["nan_rate"] = float(np.mean(gathered["vp_G_nan"]))
 +    if "vp_P" in gathered:
 +        out["floor_activity"] = float(np.mean(gathered["vp_P"] > 0))
++    if "vp_P_hi" in gathered:
++        out["cap_activity"] = float(np.mean(gathered["vp_P_hi"] > 0))
 +    if "vp_t_reward" in gathered:
 +        out["reward_compute_s_per_gpu"] = float(np.sum(gathered["vp_t_reward"]))
 +    return out
@@ -168,7 +180,7 @@ index 2a8c273..bcf0463 100644
  def eval_fn(
      pipeline,
      test_dataloader,
-@@ -219,6 +248,7 @@ def eval_fn(
+@@ -219,6 +250,7 @@ def eval_fn(
  ):
      if config.train.ema and ema is not None:
          ema.copy_ema_to(transformer_trainable_parameters, store_temp=True)
@@ -176,7 +188,7 @@ index 2a8c273..bcf0463 100644
  
      pipeline.transformer.eval()
  
-@@ -292,6 +322,14 @@ def eval_fn(
+@@ -292,6 +324,14 @@ def eval_fn(
  
      if is_main_process(rank):
          final_rewards = {key: np.concatenate(value_list) for key, value_list in all_rewards.items()}
@@ -191,7 +203,7 @@ index 2a8c273..bcf0463 100644
  
          images_to_log = images.cpu()
          prompts_to_log = prompts
-@@ -586,6 +624,8 @@ def main(_):
+@@ -586,6 +626,8 @@ def main(_):
          # SAMPLING
          pipeline.transformer.eval()
          samples_data_list = []
@@ -200,7 +212,7 @@ index 2a8c273..bcf0463 100644
  
          for i in tqdm(
              range(config.sample.num_batches_per_epoch),
-@@ -607,6 +647,7 @@ def main(_):
+@@ -607,6 +649,7 @@ def main(_):
              ).input_ids.to(device)
  
              if i == 0 and epoch % config.eval_freq == 0 and not config.debug:
@@ -208,7 +220,7 @@ index 2a8c273..bcf0463 100644
                  eval_fn(
                      pipeline,
                      test_dataloader,
-@@ -623,6 +664,7 @@ def main(_):
+@@ -623,6 +666,7 @@ def main(_):
                      ema,
                      transformer_trainable_parameters,
                  )
@@ -216,7 +228,7 @@ index 2a8c273..bcf0463 100644
  
              if i == 0 and epoch % config.save_freq == 0 and is_main_process(rank) and not config.debug:
                  save_ckpt(
-@@ -663,6 +705,9 @@ def main(_):
+@@ -663,6 +707,9 @@ def main(_):
  
              rewards_future = executor.submit(reward_fn, images, prompts, prompt_metadata, only_strict=True)
              time.sleep(0)
@@ -226,7 +238,7 @@ index 2a8c273..bcf0463 100644
  
              samples_data_list.append(
                  {
-@@ -676,6 +721,7 @@ def main(_):
+@@ -676,6 +723,7 @@ def main(_):
                  }
              )
  
@@ -234,7 +246,7 @@ index 2a8c273..bcf0463 100644
          for sample_item in tqdm(
              samples_data_list, desc="Waiting for rewards", disable=not is_main_process(rank), position=0
          ):
-@@ -683,6 +729,22 @@ def main(_):
+@@ -683,6 +731,22 @@ def main(_):
              sample_item["rewards"] = {k: torch.as_tensor(v, device=device).float() for k, v in rewards.items()}
              del sample_item["rewards_future"]
  
@@ -257,7 +269,7 @@ index 2a8c273..bcf0463 100644
          # Collate samples
          collated_samples = {
              k: (
-@@ -766,6 +828,9 @@ def main(_):
+@@ -766,6 +830,9 @@ def main(_):
                      },
                      step=global_step,
                  )
@@ -267,7 +279,7 @@ index 2a8c273..bcf0463 100644
              stat_tracker.clear()
          else:
              avg_rewards_all = gathered_rewards_dict["avg"]
-@@ -1030,6 +1095,18 @@ def main(_):
+@@ -1030,6 +1097,18 @@ def main(_):
  
          if world_size > 1:
              dist.barrier()
