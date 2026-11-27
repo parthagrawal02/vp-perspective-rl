@@ -10,7 +10,7 @@
 #SBATCH --gpus-per-node=4
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=64
-#SBATCH --mem=248G
+#SBATCH --mem=240G   # 4 x 62G = 248G is over what a node lets a job use; 240G is accepted
 #SBATCH --time=24:00:00
 #SBATCH --job-name=vp-nft
 #SBATCH -o slurm-%x-%j.out

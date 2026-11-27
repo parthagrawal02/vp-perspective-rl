@@ -9,8 +9,8 @@
 #SBATCH --gpus-per-node=4
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=64
-#SBATCH --mem=248G
-#SBATCH --time=06:00:00
+#SBATCH --mem=240G   # 4 x 62G = 248G is over what a node lets a job use; 240G is accepted
+#SBATCH --time=04:00:00   # shorter limits backfill more easily
 #SBATCH --job-name=vp-lcbase
 #SBATCH -o slurm-%x-%j.out
 set -euo pipefail
