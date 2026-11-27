@@ -29,6 +29,8 @@ sbatch rl/delta/check.slurm      # expect CHECK_OK in slurm-vp-check-<id>.out
 # prompts: preferred = the Task 12 set (copy dataset/vp_hypersim/{train,test}.txt from the project machine into
 #          $VP_NFT_DIR/dataset/vp_hypersim/); fallback = from vp_pairs_v1 (see that script's docstring for the differences)
 source config/env.sh && $VP_ENV/bin/python rl/make_dataset_from_pairs.py /work/hdd/bjop/$USER/vp_pairs_v1
+#   -> train.txt (SELECT), test.txt (fresh = validation during training), final_test.txt (REPORT, evaluate once);
+#      keeps only pairs whose reference image beats its base twins (--filter none to keep all)
 
 sbatch rl/delta/lcbase.slurm                                         # Lc_base, validated sampler (resumable)
 EPOCHS=3 RUN=smoke VP_REWARD=v1 sbatch --time=01:00:00 rl/delta/train.slurm   # smoke test
