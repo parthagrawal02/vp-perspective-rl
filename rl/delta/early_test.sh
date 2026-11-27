@@ -20,6 +20,8 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 export VP_REWARD="${VP_REWARD:-v2}" VP_LC_BASE="$LB" NFT_K=6 NFT_GROUPS=8 VP_NWORKERS=8 WANDB_MODE=offline HF_HUB_OFFLINE=1
 TB="${TRAIN_BS:-2}"; export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 ( while sleep 20; do nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits; done ) > early_test_gpumem.log 2>&1 &
+MP=$!
+# always stop the memory logger (else it keeps the GPU job alive, and billed, until the time limit) and report the peak
+trap 'kill $MP 2>/dev/null; echo "peak GPU memory (MiB): $(sort -n early_test_gpumem.log | tail -1)"' EXIT
 GPUS=0 EPOCHS="${EPOCHS:-2}" RUN=early_test TRAIN_BS=$TB TRAIN_ACC=$((48 / TB)) EXTRA="--config.debug=True" bash rl/run_train.sh
-kill %1 2>/dev/null || true; echo "peak GPU memory (MiB): $(sort -n early_test_gpumem.log | tail -1)"
 echo EARLY_TEST_DONE
