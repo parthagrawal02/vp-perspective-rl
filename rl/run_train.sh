@@ -3,7 +3,8 @@
 # This is the Task 12 smoke-test launcher (experiments/task12/run_smoke.sh) with paths from config/env.sh.
 # usage: GPUS=1,3,5,7 EPOCHS=3 RUN=smoke bash rl/run_train.sh       (check `nvidia-smi` first; use free GPUs only)
 # Micro-batch 3 x 96 gradient accumulation = the same 1152-sample optimizer step as the default 6 x 48, which OOMs on 48 GB GPUs
-# with the reward models (DeepLSD, PickScore, aesthetic CLIP) resident.
+# with the reward models (DeepLSD, PickScore, aesthetic CLIP) resident. Override with TRAIN_BS / TRAIN_ACC (keep TRAIN_BS x TRAIN_ACC =
+# 288 per GPU on 4 GPUs), e.g. TRAIN_BS=2 TRAIN_ACC=144 on 40 GB A100s.
 # Needs: rl/make_dataset.py and rl/lcbase.py outputs in $VP_NFT_DIR/dataset/vp_hypersim/ (train.txt, test.txt, lc_base.json).
 set -euo pipefail
 source "$(dirname "$0")/../config/env.sh"
@@ -15,7 +16,7 @@ echo "START $(date) GPUS=$CUDA_VISIBLE_DEVICES"
 "$VP_ENV/bin/torchrun" --nproc_per_node=$NG --master_port=${PORT:-29517} scripts/train_nft_sd3.py \
   --config config/nft.py:sd3_vp \
   --config.num_epochs=${EPOCHS:-3} \
-  --config.train.batch_size=3 --config.train.gradient_accumulation_steps=96 \
+  --config.train.batch_size=${TRAIN_BS:-3} --config.train.gradient_accumulation_steps=${TRAIN_ACC:-96} \
   --config.logdir="$VP_DATA/outputs/rl/${RUN:-run}/nft_logs" \
   --config.save_dir="$VP_DATA/checkpoints/rl/${RUN:-run}" ${EXTRA:-}
 echo "EXIT $? $(date)"
