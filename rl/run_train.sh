@@ -9,6 +9,7 @@
 set -euo pipefail
 source "$(dirname "$0")/../config/env.sh"
 GPUS=${GPUS:?set GPUS=comma-separated free GPU ids}; NG=$(echo "$GPUS" | tr ',' '\n' | wc -l)
+export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}   # less fragmentation near the memory limit
 export WANDB_MODE=${WANDB_MODE:-offline} NFT_N_GPUS=$NG VP_NWORKERS=${VP_NWORKERS:-12} CUDA_VISIBLE_DEVICES=$GPUS
 export VP_LC_BASE=${VP_LC_BASE:-$VP_NFT_DIR/dataset/vp_hypersim/lc_base.json}
 cd "$VP_NFT_DIR"
